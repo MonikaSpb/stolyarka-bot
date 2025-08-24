@@ -179,24 +179,22 @@ def build_app() -> Application:
 def main():
     app = build_app()
 
-    # --- WEBHOOK вместо polling ---
     public_url = os.environ.get("PUBLIC_URL")  # например, https://stolyarka-bot.onrender.com
     if not public_url:
         raise RuntimeError("PUBLIC_URL не задан. Укажите домен сервиса Render в переменной PUBLIC_URL")
 
-    # секретный путь, чтобы посторонние не могли слать апдейты
-    path_token = os.environ.get("WEBHOOK_PATH", "tg-webhook")
-
+    path_token = os.environ.get("WEBHOOK_PATH", "tg-webhook")  # ваш путь
     port = int(os.environ.get("PORT", 10000))
+
     webhook_url = f"{public_url.rstrip('/')}/{path_token}"
 
-    # PTB сам поднимет aiohttp-сервер и выставит вебхук
+    # В PTB v21 используем url_path (а не webhook_path)
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
-        webhook_url=webhook_url,
-        secret_token=None,           # при желании можно задать и в Telegram
-        webhook_path=f"/{path_token}"
+        url_path=path_token,        # ← правильный параметр
+        webhook_url=webhook_url,    # ← полный публичный URL вебхука
+        secret_token=None
     )
 
 if __name__ == "__main__":
