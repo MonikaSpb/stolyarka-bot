@@ -2,6 +2,8 @@ import logging
 import os
 from datetime import datetime
 from typing import Dict, Any
+from threading import Thread
+from flask import Flask
 
 from telegram import (
     Update,
@@ -18,6 +20,21 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+
+# ---------- Мини-вебсервер для Render (Web Service) ----------
+app_web = Flask(__name__)
+
+@app_web.route("/")
+def home():
+    return "StolyarkaBot is running!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 5000))
+    app_web.run(host="0.0.0.0", port=port)
+
+# Запуск Flask в отдельном потоке (чтобы Render видел открытый порт)
+Thread(target=run_web, daemon=True).start()
+# --------------------------------------------------------------
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
