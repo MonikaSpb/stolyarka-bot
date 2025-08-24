@@ -2,8 +2,6 @@ import logging
 import os
 from datetime import datetime
 from typing import Dict, Any
-from threading import Thread
-from flask import Flask
 
 from telegram import (
     Update,
@@ -21,28 +19,13 @@ from telegram.ext import (
     filters,
 )
 
-# ---------- Мини-вебсервер для Render (Web Service) ----------
-app_web = Flask(__name__)
-
-@app_web.route("/")
-def home():
-    return "StolyarkaBot is running!"
-
-def run_web():
-    port = int(os.environ.get("PORT", 5000))
-    app_web.run(host="0.0.0.0", port=port)
-
-# Запуск Flask в отдельном потоке (чтобы Render видел открытый порт)
-Thread(target=run_web, daemon=True).start()
-# --------------------------------------------------------------
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Стадии диалога
+# --- стадии диалога ---
 BEEN_BEFORE, BRANCH, AGE, TIME, CHILD_INFO, PHONE = range(6)
 
-# Тексты
+# --- тексты ---
 WELCOME = (
     "Вас приветствует СТОЛЯРКОБОТ👋\n\n"
     "В Столяркино ваш ребенок научится мастерить из дерева, работать на станках и с инструментами, "
@@ -64,7 +47,7 @@ STEP6 = (
 )
 CANCELLED = "Диалог отменён. Чтобы начать заново — отправьте /start"
 
-# Кнопки
+# --- кнопки ---
 YES_NO_KB = ReplyKeyboardMarkup([["Да", "Нет"]], resize_keyboard=True)
 BRANCH_KB = ReplyKeyboardMarkup([["ул. Новосёлов, 105"]], resize_keyboard=True)
 AGE_KB = ReplyKeyboardMarkup([["4–6 лет", "7–9 лет", "10+ лет"]], resize_keyboard=True)
@@ -77,14 +60,14 @@ PHONE_KB = ReplyKeyboardMarkup(
     resize_keyboard=True,
 )
 
-# Память процесса
+# --- временное хранилище ---
 user_data_store: Dict[int, Dict[str, Any]] = {}
 
 # /id
 async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Ваш chat_id: {update.effective_chat.id}")
 
-# Сценарий
+# сценарий
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user_data_store[uid] = {"started_at": datetime.utcnow().isoformat()}
@@ -138,7 +121,7 @@ async def send_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     data = user_data_store.get(uid, {})
 
-    # Пользователю — только финал с выбранным временем
+    # пользователю — только финал с выбранным временем
     final_msg = (
         f"Ура! Я вас записал 😍\n\n"
         f"Вы выбрали время: {data.get('time_slot','')}\n\n"
@@ -149,7 +132,7 @@ async def send_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(final_msg, reply_markup=ReplyKeyboardRemove())
 
-    # Админ-группа
+    # админ-группа
     ADMIN_GROUP_ID = -4926335845
     summary = (
         "<b>📋 Новая запись в Столяркино</b>\n\n"
@@ -167,14 +150,13 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(CANCELLED, reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-def main():
+def build_app() -> Application:
     bot_token = os.getenv("BOT_TOKEN")
     if not bot_token:
-        raise RuntimeError("Переменная окружения BOT_TOKEN не задана в Render")
+        raise RuntimeError("BOT_TOKEN не задан в переменных окружения Render")
     app = Application.builder().token(bot_token).build()
 
     app.add_handler(CommandHandler("id", my_id))
-
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -192,8 +174,30 @@ def main():
         allow_reentry=True,
     )
     app.add_handler(conv)
+    return app
 
-    app.run_polling()
+def main():
+    app = build_app()
+
+    # --- WEBHOOK вместо polling ---
+    public_url = os.environ.get("PUBLIC_URL")  # например, https://stolyarka-bot.onrender.com
+    if not public_url:
+        raise RuntimeError("PUBLIC_URL не задан. Укажите домен сервиса Render в переменной PUBLIC_URL")
+
+    # секретный путь, чтобы посторонние не могли слать апдейты
+    path_token = os.environ.get("WEBHOOK_PATH", "tg-webhook")
+
+    port = int(os.environ.get("PORT", 10000))
+    webhook_url = f"{public_url.rstrip('/')}/{path_token}"
+
+    # PTB сам поднимет aiohttp-сервер и выставит вебхук
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        webhook_url=webhook_url,
+        secret_token=None,           # при желании можно задать и в Telegram
+        webhook_path=f"/{path_token}"
+    )
 
 if __name__ == "__main__":
     main()
