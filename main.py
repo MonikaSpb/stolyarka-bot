@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 PARENT_NAME, BEEN_BEFORE, BRANCH, AGE, TIME, CHILD_INFO, PHONE = range(7)
 
 # ---- тексты ----
-ASK_NAME = "Как вас зовут?"
 WELCOME = (
     "Вас приветствует СТОЛЯРКОБОТ👋\n\n"
     "В Столяркино ваш ребенок научится мастерить из дерева, работать на станках и с инструментами, "
@@ -35,6 +34,7 @@ WELCOME = (
     "Тем более расписание на новый учебный год уже готово 🤗\n\n"
     "Скажите, вы уже были у нас?"
 )
+ASK_NAME = "Как вас зовут?"
 STEP2 = "Понял вас 😇\n\nВыберите филиал, в который вам удобнее ходить:"
 STEP3 = "Отлично 😊\n\nТеперь определимся с возрастной группой вашего ребенка"
 STEP4 = "Выберите удобное время для посещения Столяркино 👇"
@@ -49,12 +49,14 @@ STEP6 = (
 CANCELLED = "Диалог отменён. Чтобы начать заново — отправьте /start"
 
 # ---- кнопки ----
-YES_NO_KB = ReplyKeyboardMarkup([["Да", "Нет"]], resize_keyboard=True)
-BRANCH_KB = ReplyKeyboardMarkup([["ул. Новосёлов, 105"]], resize_keyboard=True)
-AGE_KB = ReplyKeyboardMarkup(
-    [["4–6 лет", "7–9 лет", "10+ лет", "7–14 лет"]],
-    resize_keyboard=True,
-)
+BACK_BTN = "◀️ Назад"
+
+def with_back(kb_rows: List[List[str]]) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(kb_rows + [[BACK_BTN]], resize_keyboard=True)
+
+YES_NO_KB = with_back([["Да", "Нет"]])
+BRANCH_KB = with_back([["ул. Новосёлов, 105"]])
+AGE_KB = with_back([["4–6 лет", "7–9 лет", "10+ лет", "7–14 лет"]])
 
 # ---- расписания по возрастам ----
 SCHEDULE_BY_AGE = {
@@ -76,13 +78,12 @@ SCHEDULE_BY_AGE = {
 }
 
 def chunk(lst: List[str], n: int) -> List[List[str]]:
-    """Разбить список на строки по n кнопок."""
     return [lst[i:i+n] for i in range(0, len(lst), n)]
 
 def time_keyboard_for_age(age_group: str) -> ReplyKeyboardMarkup:
     slots = SCHEDULE_BY_AGE.get(age_group, [])
     rows = chunk(slots, 2 if len(slots) > 4 else 3)
-    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+    return with_back(rows)
 
 # ---- временное хранилище ----
 user_data_store: Dict[int, Dict[str, Any]] = {}
@@ -95,58 +96,103 @@ async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user_data_store[uid] = {"started_at": datetime.utcnow().isoformat()}
-    await update.message.reply_text(ASK_NAME, reply_markup=ReplyKeyboardRemove())
+    # 1) приветствие
+    await update.message.reply_text(WELCOME, reply_markup=ReplyKeyboardRemove())
+    # 2) сразу после — спросить имя (с кнопкой «Назад», которая просто повторит вопрос)
+    await update.message.reply_text(ASK_NAME, reply_markup=ReplyKeyboardMarkup([[BACK_BTN]], resize_keyboard=True))
     return PARENT_NAME
 
 async def parent_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Обработка «Назад»: просто повторить вопрос имени
+    if (update.message.text or "").strip() == BACK_BTN:
+        await update.message.reply_text(ASK_NAME, reply_markup=ReplyKeyboardMarkup([[BACK_BTN]], resize_keyboard=True))
+        return PARENT_NAME
+
     uid = update.effective_user.id
     user_data_store[uid]["parent_name"] = (update.message.text or "").strip()
-    await update.message.reply_text(WELCOME, reply_markup=YES_NO_KB)
+    await update.message.reply_text("Скажите, вы уже были у нас?", reply_markup=YES_NO_KB)
     return BEEN_BEFORE
 
 async def been_before(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (update.message.text or "").strip()
+    # Назад → снова спросим имя
+    if text == BACK_BTN:
+        await update.message.reply_text(ASK_NAME, reply_markup=ReplyKeyboardMarkup([[BACK_BTN]], resize_keyboard=True))
+        return PARENT_NAME
+
     uid = update.effective_user.id
-    user_data_store[uid]["been_before"] = (update.message.text or "").strip()
+    user_data_store[uid]["been_before"] = text
     await update.message.reply_text(STEP2, reply_markup=BRANCH_KB)
     return BRANCH
 
 async def choose_branch(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (update.message.text or "").strip()
+    if text == BACK_BTN:
+        await update.message.reply_text("Скажите, вы уже были у нас?", reply_markup=YES_NO_KB)
+        return BEEN_BEFORE
+
     uid = update.effective_user.id
-    user_data_store[uid]["branch"] = (update.message.text or "").strip()
+    user_data_store[uid]["branch"] = text
     await update.message.reply_text(STEP3, reply_markup=AGE_KB)
     return AGE
 
 async def choose_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (update.message.text or "").strip()
+    if text == BACK_BTN:
+        await update.message.reply_text(STEP2, reply_markup=BRANCH_KB)
+        return BRANCH
+
     uid = update.effective_user.id
-    age_group = (update.message.text or "").strip()
-    user_data_store[uid]["age_group"] = age_group
-    await update.message.reply_text(STEP4, reply_markup=time_keyboard_for_age(age_group))
+    user_data_store[uid]["age_group"] = text
+    await update.message.reply_text(STEP4, reply_markup=time_keyboard_for_age(text))
     return TIME
 
 async def choose_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (update.message.text or "").strip()
     uid = update.effective_user.id
-    user_data_store[uid]["time_slot"] = (update.message.text or "").strip()
-    await update.message.reply_text(STEP5, reply_markup=ReplyKeyboardRemove())
+
+    if text == BACK_BTN:
+        # вернуться к выбору возраста
+        await update.message.reply_text(STEP3, reply_markup=AGE_KB)
+        return AGE
+
+    user_data_store[uid]["time_slot"] = text
+    await update.message.reply_text(STEP5, reply_markup=ReplyKeyboardMarkup([[BACK_BTN]], resize_keyboard=True))
     return CHILD_INFO
 
 async def child_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (update.message.text or "").strip()
     uid = update.effective_user.id
-    user_data_store[uid]["child_info"] = (update.message.text or "").strip()
-    await update.message.reply_text(STEP6, reply_markup=ReplyKeyboardMarkup(
-        [[KeyboardButton("Отправить телефон", request_contact=True)]],
+
+    if text == BACK_BTN:
+        age = user_data_store[uid].get("age_group", "")
+        await update.message.reply_text(STEP4, reply_markup=time_keyboard_for_age(age))
+        return TIME
+
+    user_data_store[uid]["child_info"] = text
+    phone_kb = ReplyKeyboardMarkup(
+        [[KeyboardButton("Отправить телефон", request_contact=True)], [BACK_BTN]],
         resize_keyboard=True,
-    ))
+    )
+    await update.message.reply_text(STEP6, reply_markup=phone_kb)
     return PHONE
 
 async def phone_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (update.message.text or "").strip()
     uid = update.effective_user.id
-    user_data_store[uid]["phone"] = (update.message.text or "").strip()
+
+    if text == BACK_BTN:
+        await update.message.reply_text(STEP5, reply_markup=ReplyKeyboardMarkup([[BACK_BTN]], resize_keyboard=True))
+        return CHILD_INFO
+
+    user_data_store[uid]["phone"] = text
     await send_final(update, context)
     return ConversationHandler.END
 
 async def phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     contact: Contact = update.message.contact
+    # контакт пришёл → завершаем
     user_data_store[uid]["phone"] = contact.phone_number if contact else ""
     await send_final(update, context)
     return ConversationHandler.END
@@ -161,12 +207,12 @@ async def send_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Вы выбрали время: {data.get('time_slot','')}\n\n"
         "Наш администратор с вами свяжется для подтверждения записи после нашего отпуска.\n\n"
         "А пока обязательно подпишитесь на наш телеграм-канал:\n"
-        "СТОЛЯРКИНО — https://t.me/stolyarkino_tyumen\n"
+        "СТОЛЯРКИНО — https://t.me/stolyarkaizh\n"
         "Там будут все актуальные новости о жизни нашей мастерской 🤗"
     )
     await update.message.reply_text(final_msg, reply_markup=ReplyKeyboardRemove())
 
-    # админ-группа (без строки «Создано»)
+    # админ-группа — без строки «Создано»
     ADMIN_GROUP_ID = -4926335845
     summary = (
         "<b>📋 Новая запись в Столяркино</b>\n\n"
