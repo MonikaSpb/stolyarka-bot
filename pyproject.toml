@@ -1,0 +1,10 @@
+[project]
+name = "stolyarka-bot"
+version = "0.1.0"
+description = ""
+authors = ["Petr <you@example.com>"]
+requires-python = ">=3.11"
+
+dependencies = [
+    "python-telegram-bot==20.6"
+]
