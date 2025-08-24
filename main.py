@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import datetime
 from typing import Dict, Any
 
@@ -62,7 +63,7 @@ PHONE_KB = ReplyKeyboardMarkup(
 # Память процесса
 user_data_store: Dict[int, Dict[str, Any]] = {}
 
-# Сервисная команда /id
+# /id
 async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Ваш chat_id: {update.effective_chat.id}")
 
@@ -150,8 +151,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def main():
-    BOT_TOKEN = "7620525115:AAHdQJY5hOJ5h8RprAJpfpGiu5ItpFuRZdI"  # ← ваш токен
-    app = Application.builder().token(BOT_TOKEN).build()
+    bot_token = os.getenv("BOT_TOKEN")
+    if not bot_token:
+        raise RuntimeError("Переменная окружения BOT_TOKEN не задана в Render")
+    app = Application.builder().token(bot_token).build()
 
     app.add_handler(CommandHandler("id", my_id))
 
