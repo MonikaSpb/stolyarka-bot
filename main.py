@@ -31,10 +31,10 @@ WELCOME = (
     "В Столяркино ваш ребенок научится мастерить из дерева, работать на станках и с инструментами, "
     "станет настоящим хозяином в доме ⚒️\n\n"
     "Я помогу вам записаться в нашу мастерскую и занять место в группе.\n"
-    "Тем более расписание на новый учебный год уже готово 🤗\n\n"
-    "Скажите, вы уже были у нас?"
+    "Тем более расписание на новый учебный год уже готово 🤗"
 )
 ASK_NAME = "Как вас зовут?"
+STEP1B = "Скажите, вы уже были у нас?"
 STEP2 = "Понял вас 😇\n\nВыберите филиал, в который вам удобнее ходить:"
 STEP3 = "Отлично 😊\n\nТеперь определимся с возрастной группой вашего ребенка"
 STEP4 = "Выберите удобное время для посещения Столяркино 👇"
@@ -88,7 +88,7 @@ def time_keyboard_for_age(age_group: str) -> ReplyKeyboardMarkup:
 # ---- временное хранилище ----
 user_data_store: Dict[int, Dict[str, Any]] = {}
 
-# /id
+# /id (служебная)
 async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Ваш chat_id: {update.effective_chat.id}")
 
@@ -98,19 +98,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data_store[uid] = {"started_at": datetime.utcnow().isoformat()}
     # 1) приветствие
     await update.message.reply_text(WELCOME, reply_markup=ReplyKeyboardRemove())
-    # 2) сразу после — спросить имя (с кнопкой «Назад», которая просто повторит вопрос)
+    # 2) сразу после — спросить имя (кнопка «Назад» просто повторяет вопрос)
     await update.message.reply_text(ASK_NAME, reply_markup=ReplyKeyboardMarkup([[BACK_BTN]], resize_keyboard=True))
     return PARENT_NAME
 
 async def parent_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Обработка «Назад»: просто повторить вопрос имени
-    if (update.message.text or "").strip() == BACK_BTN:
+    text = (update.message.text or "").strip()
+    if text == BACK_BTN:
         await update.message.reply_text(ASK_NAME, reply_markup=ReplyKeyboardMarkup([[BACK_BTN]], resize_keyboard=True))
         return PARENT_NAME
 
     uid = update.effective_user.id
-    user_data_store[uid]["parent_name"] = (update.message.text or "").strip()
-    await update.message.reply_text("Скажите, вы уже были у нас?", reply_markup=YES_NO_KB)
+    user_data_store[uid]["parent_name"] = text
+    await update.message.reply_text(STEP1B, reply_markup=YES_NO_KB)
     return BEEN_BEFORE
 
 async def been_before(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -128,7 +128,7 @@ async def been_before(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def choose_branch(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip()
     if text == BACK_BTN:
-        await update.message.reply_text("Скажите, вы уже были у нас?", reply_markup=YES_NO_KB)
+        await update.message.reply_text(STEP1B, reply_markup=YES_NO_KB)
         return BEEN_BEFORE
 
     uid = update.effective_user.id
@@ -152,7 +152,6 @@ async def choose_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
 
     if text == BACK_BTN:
-        # вернуться к выбору возраста
         await update.message.reply_text(STEP3, reply_markup=AGE_KB)
         return AGE
 
@@ -192,7 +191,6 @@ async def phone_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def phone_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     contact: Contact = update.message.contact
-    # контакт пришёл → завершаем
     user_data_store[uid]["phone"] = contact.phone_number if contact else ""
     await send_final(update, context)
     return ConversationHandler.END
@@ -201,13 +199,13 @@ async def send_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     data = user_data_store.get(uid, {})
 
-    # пользователю — только финал с выбранным временем
+    # пользователю — только финал с выбранным временем + новая ссылка
     final_msg = (
         f"Ура! Я вас записал 😍\n\n"
         f"Вы выбрали время: {data.get('time_slot','')}\n\n"
         "Наш администратор с вами свяжется для подтверждения записи после нашего отпуска.\n\n"
         "А пока обязательно подпишитесь на наш телеграм-канал:\n"
-        "СТОЛЯРКИНО — https://t.me/stolyarkaizh\n"
+        "СТОЛЯРКИНО — https://t.me/stolyarkino_tyumen\n"
         "Там будут все актуальные новости о жизни нашей мастерской 🤗"
     )
     await update.message.reply_text(final_msg, reply_markup=ReplyKeyboardRemove())
@@ -271,8 +269,8 @@ def main():
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
-        url_path=path_token,
-        webhook_url=webhook_url,
+        url_path=path_token,     # локальный путь, который слушает PTB
+        webhook_url=webhook_url, # публичный URL, на который шлёт Telegram
         secret_token=None
     )
 
