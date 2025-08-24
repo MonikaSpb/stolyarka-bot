@@ -1,7 +1,7 @@
 import logging
 import os
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from telegram import (
     Update,
@@ -22,10 +22,11 @@ from telegram.ext import (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- стадии диалога ---
-BEEN_BEFORE, BRANCH, AGE, TIME, CHILD_INFO, PHONE = range(6)
+# ---- стадии диалога ----
+PARENT_NAME, BEEN_BEFORE, BRANCH, AGE, TIME, CHILD_INFO, PHONE = range(7)
 
-# --- тексты ---
+# ---- тексты ----
+ASK_NAME = "Как вас зовут?"
 WELCOME = (
     "Вас приветствует СТОЛЯРКОБОТ👋\n\n"
     "В Столяркино ваш ребенок научится мастерить из дерева, работать на станках и с инструментами, "
@@ -47,30 +48,59 @@ STEP6 = (
 )
 CANCELLED = "Диалог отменён. Чтобы начать заново — отправьте /start"
 
-# --- кнопки ---
+# ---- кнопки ----
 YES_NO_KB = ReplyKeyboardMarkup([["Да", "Нет"]], resize_keyboard=True)
 BRANCH_KB = ReplyKeyboardMarkup([["ул. Новосёлов, 105"]], resize_keyboard=True)
-AGE_KB = ReplyKeyboardMarkup([["4–6 лет", "7–9 лет", "10+ лет"]], resize_keyboard=True)
-TIME_KB = ReplyKeyboardMarkup(
-    [["Четверг 17:30", "Суббота 10:00", "Воскресенье 10:00"]],
-    resize_keyboard=True,
-)
-PHONE_KB = ReplyKeyboardMarkup(
-    [[KeyboardButton("Отправить телефон", request_contact=True)]],
+AGE_KB = ReplyKeyboardMarkup(
+    [["4–6 лет", "7–9 лет", "10+ лет", "7–14 лет"]],
     resize_keyboard=True,
 )
 
-# --- временное хранилище ---
+# ---- расписания по возрастам ----
+SCHEDULE_BY_AGE = {
+    "4–6 лет": [
+        "Среда 17:45", "Суббота 10:00", "Воскресенье 10:00"
+    ],
+    "7–9 лет": [
+        "Четверг 16:00", "Суббота 11:45", "Воскресенье 11:45"
+    ],
+    "10+ лет": [
+        "Четверг 17:45", "Пятница 17:45", "Суббота 17:30", "Воскресенье 17:30"
+    ],
+    "7–14 лет": [
+        "Среда 10:00", "Среда 16:00", "Четверг 10:00",
+        "Пятница 10:00", "Пятница 16:00",
+        "Суббота 13:45", "Суббота 15:30",
+        "Воскресенье 13:45", "Воскресенье 15:30",
+    ],
+}
+
+def chunk(lst: List[str], n: int) -> List[List[str]]:
+    """Разбить список на строки по n кнопок."""
+    return [lst[i:i+n] for i in range(0, len(lst), n)]
+
+def time_keyboard_for_age(age_group: str) -> ReplyKeyboardMarkup:
+    slots = SCHEDULE_BY_AGE.get(age_group, [])
+    rows = chunk(slots, 2 if len(slots) > 4 else 3)
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+# ---- временное хранилище ----
 user_data_store: Dict[int, Dict[str, Any]] = {}
 
 # /id
 async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Ваш chat_id: {update.effective_chat.id}")
 
-# сценарий
+# ---- сценарий ----
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user_data_store[uid] = {"started_at": datetime.utcnow().isoformat()}
+    await update.message.reply_text(ASK_NAME, reply_markup=ReplyKeyboardRemove())
+    return PARENT_NAME
+
+async def parent_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    user_data_store[uid]["parent_name"] = (update.message.text or "").strip()
     await update.message.reply_text(WELCOME, reply_markup=YES_NO_KB)
     return BEEN_BEFORE
 
@@ -88,8 +118,9 @@ async def choose_branch(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def choose_age(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    user_data_store[uid]["age_group"] = (update.message.text or "").strip()
-    await update.message.reply_text(STEP4, reply_markup=TIME_KB)
+    age_group = (update.message.text or "").strip()
+    user_data_store[uid]["age_group"] = age_group
+    await update.message.reply_text(STEP4, reply_markup=time_keyboard_for_age(age_group))
     return TIME
 
 async def choose_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -101,7 +132,10 @@ async def choose_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def child_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     user_data_store[uid]["child_info"] = (update.message.text or "").strip()
-    await update.message.reply_text(STEP6, reply_markup=PHONE_KB)
+    await update.message.reply_text(STEP6, reply_markup=ReplyKeyboardMarkup(
+        [[KeyboardButton("Отправить телефон", request_contact=True)]],
+        resize_keyboard=True,
+    ))
     return PHONE
 
 async def phone_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -127,22 +161,22 @@ async def send_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Вы выбрали время: {data.get('time_slot','')}\n\n"
         "Наш администратор с вами свяжется для подтверждения записи после нашего отпуска.\n\n"
         "А пока обязательно подпишитесь на наш телеграм-канал:\n"
-        "СТОЛЯРКИНО — https://t.me/stolyarkaizh\n"
+        "СТОЛЯРКИНО — https://t.me/stolyarkino_tyumen\n"
         "Там будут все актуальные новости о жизни нашей мастерской 🤗"
     )
     await update.message.reply_text(final_msg, reply_markup=ReplyKeyboardRemove())
 
-    # админ-группа
+    # админ-группа (без строки «Создано»)
     ADMIN_GROUP_ID = -4926335845
     summary = (
         "<b>📋 Новая запись в Столяркино</b>\n\n"
+        f"👨‍👩‍👧 <b>Родитель:</b> {data.get('parent_name','')}\n"
         f"👤 <b>Был у нас:</b> {data.get('been_before','')}\n"
         f"📍 <b>Филиал:</b> {data.get('branch','')}\n"
         f"🎯 <b>Возраст:</b> {data.get('age_group','')}\n"
         f"🕒 <b>Время:</b> {data.get('time_slot','')}\n"
         f"🧒 <b>Ребёнок:</b> {data.get('child_info','')}\n"
         f"📱 <b>Телефон:</b> {data.get('phone','')}\n"
-        f"⏱ <b>Создано:</b> {data.get('started_at','')}"
     )
     await context.bot.send_message(chat_id=ADMIN_GROUP_ID, text=summary, parse_mode="HTML")
 
@@ -150,6 +184,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(CANCELLED, reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
+# ---- сборка приложения ----
 def build_app() -> Application:
     bot_token = os.getenv("BOT_TOKEN")
     if not bot_token:
@@ -160,6 +195,7 @@ def build_app() -> Application:
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
+            PARENT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, parent_name)],
             BEEN_BEFORE: [MessageHandler(filters.TEXT & ~filters.COMMAND, been_before)],
             BRANCH:      [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_branch)],
             AGE:         [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_age)],
@@ -178,22 +214,19 @@ def build_app() -> Application:
 
 def main():
     app = build_app()
-
     public_url = os.environ.get("PUBLIC_URL")  # например, https://stolyarka-bot.onrender.com
     if not public_url:
         raise RuntimeError("PUBLIC_URL не задан. Укажите домен сервиса Render в переменной PUBLIC_URL")
 
-    path_token = os.environ.get("WEBHOOK_PATH", "tg-webhook")  # ваш путь
+    path_token = os.environ.get("WEBHOOK_PATH", "tg-webhook")
     port = int(os.environ.get("PORT", 10000))
-
     webhook_url = f"{public_url.rstrip('/')}/{path_token}"
 
-    # В PTB v21 используем url_path (а не webhook_path)
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
-        url_path=path_token,        # ← правильный параметр
-        webhook_url=webhook_url,    # ← полный публичный URL вебхука
+        url_path=path_token,
+        webhook_url=webhook_url,
         secret_token=None
     )
 
